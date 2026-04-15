@@ -32,8 +32,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
+import edge_tts
 import httpx
+import llm_adapter as anthropic
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -60,10 +62,8 @@ log = logging.getLogger("jarvis")
 # Config
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-FISH_API_KEY = os.getenv("FISH_API_KEY", "")
-FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-FISH_API_URL = "https://api.fish.audio/v1/tts"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+EDGE_TTS_VOICE = os.getenv("EDGE_TTS_VOICE", "en-GB-ThomasNeural")
 USER_NAME = os.getenv("USER_NAME", "sir")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1047,32 +1047,17 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
-        return None
-
+    """Generate speech audio from text using edge-tts."""
     try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "reference_id": FISH_VOICE_ID,
-                    "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
+        communicate = edge_tts.Communicate(text, EDGE_TTS_VOICE)
+        audio_data = bytearray()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_data.extend(chunk["data"])
+        
+        _session_tokens["tts_calls"] += 1
+        _append_usage_entry(0, 0, "tts")
+        return bytes(audio_data)
     except Exception as e:
         log.error(f"TTS error: {e}")
         return None
@@ -1337,10 +1322,10 @@ return windowList
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     global anthropic_client, cached_projects
-    if ANTHROPIC_API_KEY:
-        anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    if GEMINI_API_KEY:
+        anthropic_client = anthropic.AsyncAnthropic(api_key=GEMINI_API_KEY)
     else:
-        log.warning("ANTHROPIC_API_KEY not set — LLM features disabled")
+        log.warning("GEMINI_API_KEY not set — LLM features disabled")
     cached_projects = []
 
     # Start context refresh in a separate thread (never touches event loop)

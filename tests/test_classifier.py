@@ -23,7 +23,8 @@ if env_path.exists():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
-import anthropic
+import platform
+import llm_adapter as anthropic
 
 # Import the classifier and speech corrections
 from server import classify_intent, apply_speech_corrections
